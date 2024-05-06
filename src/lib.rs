@@ -326,7 +326,7 @@ impl ClientHandle {
         }
 
         self.inner = h;
-        self.context.server_info = info.ok_or(Error::Connection(ConnectionError::Broken))?;
+        self.context.server_info = info.ok_or(Error::Connection(ConnectionError::NoPacketReceived))?;
         Ok(())
     }
 
