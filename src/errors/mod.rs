@@ -61,6 +61,9 @@ pub enum ConnectionError {
 
     #[error("Connection broken")]
     Broken,
+
+    #[error("No packet received")]
+    NoPacketReceived,
 }
 
 /// This type enumerates connection URL errors.
