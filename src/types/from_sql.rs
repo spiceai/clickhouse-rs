@@ -303,6 +303,9 @@ impl<'a> FromSql<'a> for NaiveDate {
             ValueRef::Date(v) => NaiveDate::from_ymd_opt(1970, 1, 1)
                 .map(|unix_epoch| unix_epoch + Duration::try_days(v.into()).expect("TimeDelta::days out of bounds"))
                 .ok_or(Error::FromSql(FromSqlError::OutOfRange)),
+            ValueRef::Date32(v) => NaiveDate::from_ymd_opt(1970, 1, 1)
+                .map(|unix_epoch| unix_epoch + Duration::try_days(v.into()).expect("TimeDelta::days out of bounds"))
+                .ok_or(Error::FromSql(FromSqlError::OutOfRange)),
             _ => {
                 let from = SqlType::from(value).to_string();
                 Err(Error::FromSql(FromSqlError::InvalidType {

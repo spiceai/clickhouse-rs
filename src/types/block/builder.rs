@@ -117,6 +117,7 @@ fn put_param<K: ColumnType>(
 fn extract_timezone(value: &Value) -> Tz {
     match value {
         Value::Date(_) => *DEFAULT_TZ,
+        Value::Date32(_) => *DEFAULT_TZ,
         Value::DateTime(_, tz) => *tz,
         Value::Nullable(Either::Right(d)) => extract_timezone(d),
         Value::Array(_, data) => {

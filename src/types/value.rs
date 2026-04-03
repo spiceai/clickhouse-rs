@@ -40,6 +40,7 @@ pub enum Value {
     Float32(f32),
     Float64(f64),
     Date(u16),
+    Date32(i32),
     DateTime(u32, Tz),
     DateTime64(i64, (u32, Tz)),
     ChronoDateTime(DateTime<Tz>),
@@ -73,6 +74,7 @@ impl Hash for Value {
             Self::UInt64(i) => i.hash(state),
             Self::UInt128(i) => i.hash(state),
             Self::Date(d) => d.hash(state),
+            Self::Date32(d) => d.hash(state),
             Self::DateTime(t, _) => t.hash(state),
             Self::DateTime64(t, (prec_a, _)) => (*t, *prec_a).hash(state),
             _ => unimplemented!(),
@@ -100,6 +102,7 @@ impl PartialEq for Value {
             (Value::Float32(a), Value::Float32(b)) => *a == *b,
             (Value::Float64(a), Value::Float64(b)) => *a == *b,
             (Value::Date(a), Value::Date(b)) => *a == *b,
+            (Value::Date32(a), Value::Date32(b)) => *a == *b,
             (Value::DateTime(a, tz_a), Value::DateTime(b, tz_b)) => {
                 let time_a = tz_a.timestamp_opt(i64::from(*a), 0).unwrap();
                 let time_b = tz_b.timestamp_opt(i64::from(*b), 0).unwrap();
@@ -239,6 +242,18 @@ impl fmt::Display for Value {
                     .unwrap();
                 fmt::Display::fmt(&date.format("%Y-%m-%d"), f)
             }
+            Value::Date32(v) if f.alternate() => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .map(|unix_epoch| unix_epoch + Duration::try_days((*v).into()).expect("TimeDelta::days out of bounds"))
+                    .unwrap();
+                fmt::Display::fmt(&date, f)
+            }
+            Value::Date32(v) => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .map(|unix_epoch| unix_epoch + Duration::try_days((*v).into()).expect("TimeDelta::days out of bounds"))
+                    .unwrap();
+                fmt::Display::fmt(&date.format("%Y-%m-%d"), f)
+            }
             Value::Nullable(v) => match v {
                 Either::Left(_) => write!(f, "NULL"),
                 Either::Right(data) => data.fmt(f),
@@ -294,6 +309,7 @@ impl From<Value> for SqlType {
             Value::Float32(_) => SqlType::Float32,
             Value::Float64(_) => SqlType::Float64,
             Value::Date(_) => SqlType::Date,
+            Value::Date32(_) => SqlType::Date,
             Value::DateTime(_, _) => SqlType::DateTime(DateTimeType::DateTime32),
             Value::ChronoDateTime(_) => SqlType::DateTime(DateTimeType::DateTime32),
             Value::Nullable(d) => match d {
@@ -552,6 +568,11 @@ impl From<Value> for AppDate {
                 .map(|unix_epoch| unix_epoch + Duration::try_days(x.into()).expect("TimeDelta::days out of bounds"))
                 .unwrap();
         }
+        if let Value::Date32(x) = v {
+            return NaiveDate::from_ymd_opt(1970, 1, 1)
+                .map(|unix_epoch| unix_epoch + Duration::try_days(x.into()).expect("TimeDelta::days out of bounds"))
+                .unwrap();
+        }
         let from = SqlType::from(v);
         panic!("Can't convert Value::{} into {}", from, "AppDate")
     }
@@ -806,7 +827,7 @@ mod test {
     #[test]
     fn test_size_of() {
         use std::mem;
-        assert_eq!(56, mem::size_of::<[Value; 1]>());
+        assert_eq!(64, mem::size_of::<[Value; 1]>());
     }
 
     #[test]

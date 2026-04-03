@@ -38,6 +38,7 @@ pub enum ValueRef<'a> {
     Float32(f32),
     Float64(f64),
     Date(u16),
+    Date32(i32),
     DateTime(u32, Tz),
     DateTime64(i64, &'a (u32, Tz)),
     Nullable(Either<&'static SqlType, Box<ValueRef<'a>>>),
@@ -93,6 +94,7 @@ impl<'a> PartialEq for ValueRef<'a> {
             (ValueRef::Float32(a), ValueRef::Float32(b)) => *a == *b,
             (ValueRef::Float64(a), ValueRef::Float64(b)) => *a == *b,
             (ValueRef::Date(a), ValueRef::Date(b)) => *a == *b,
+            (ValueRef::Date32(a), ValueRef::Date32(b)) => *a == *b,
             (ValueRef::DateTime(a, tz_a), ValueRef::DateTime(b, tz_b)) => {
                 let time_a = tz_a.timestamp_opt(i64::from(*a), 0);
                 let time_b = tz_b.timestamp_opt(i64::from(*b), 0);
@@ -150,6 +152,18 @@ impl<'a> fmt::Display for ValueRef<'a> {
                 fmt::Display::fmt(&date, f)
             }
             ValueRef::Date(v) => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .map(|unix_epoch| unix_epoch + Duration::try_days((*v).into()).expect("TimeDelta::days out of bounds"))
+                    .unwrap();
+                fmt::Display::fmt(&date.format("%Y-%m-%d"), f)
+            }
+            ValueRef::Date32(v) if f.alternate() => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .map(|unix_epoch| unix_epoch + Duration::try_days((*v).into()).expect("TimeDelta::days out of bounds"))
+                    .unwrap();
+                fmt::Display::fmt(&date, f)
+            }
+            ValueRef::Date32(v) => {
                 let date = NaiveDate::from_ymd_opt(1970, 1, 1)
                     .map(|unix_epoch| unix_epoch + Duration::try_days((*v).into()).expect("TimeDelta::days out of bounds"))
                     .unwrap();
@@ -220,6 +234,7 @@ impl<'a> From<ValueRef<'a>> for SqlType {
             ValueRef::Float32(_) => SqlType::Float32,
             ValueRef::Float64(_) => SqlType::Float64,
             ValueRef::Date(_) => SqlType::Date,
+            ValueRef::Date32(_) => SqlType::Date,
             ValueRef::DateTime(_, _) => SqlType::DateTime(DateTimeType::DateTime32),
             ValueRef::Nullable(u) => match u {
                 Either::Left(sql_type) => SqlType::Nullable(sql_type),
@@ -288,6 +303,7 @@ impl<'a> From<ValueRef<'a>> for Value {
             ValueRef::Float32(v) => Value::Float32(v),
             ValueRef::Float64(v) => Value::Float64(v),
             ValueRef::Date(v) => Value::Date(v),
+            ValueRef::Date32(v) => Value::Date32(v),
             ValueRef::DateTime(v, tz) => Value::DateTime(v, tz),
             ValueRef::Nullable(u) => match u {
                 Either::Left(sql_type) => Value::Nullable(Either::Left((sql_type.clone()).into())),
@@ -385,6 +401,7 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
             Value::Float32(v) => ValueRef::Float32(*v),
             Value::Float64(v) => ValueRef::Float64(*v),
             Value::Date(v) => ValueRef::Date(*v),
+            Value::Date32(v) => ValueRef::Date32(*v),
             Value::DateTime(v, tz) => ValueRef::DateTime(*v, *tz),
             Value::DateTime64(v, params) => ValueRef::DateTime64(*v, params),
             Value::Nullable(u) => match u {

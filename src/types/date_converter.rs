@@ -42,3 +42,20 @@ impl DateConverter for u32 {
         SqlType::DateTime(DateTimeType::DateTime32)
     }
 }
+
+impl DateConverter for i32 {
+    fn to_date(&self, _tz: Tz) -> ValueRef<'static> {
+        ValueRef::Date32(*self)
+    }
+
+    fn get_stamp(source: Value) -> Self {
+        let date = NaiveDate::from(source);
+        const UNIX_EPOCH_DAY: i64 = 719_163;
+        let gregorian_day = i64::from(date.num_days_from_ce());
+        (gregorian_day - UNIX_EPOCH_DAY) as i32
+    }
+
+    fn date_type() -> SqlType {
+        SqlType::Date
+    }
+}

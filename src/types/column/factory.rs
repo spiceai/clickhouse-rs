@@ -77,6 +77,7 @@ impl dyn ColumnData {
             "Float64" | "Double" => W::wrap(VectorColumnData::<f64>::load(reader, size)?),
             "String" | "Char" | "Varchar" | "Text" | "TinyText" | "MediumText" | "LongText" | "Blob" | "TinyBlob" | "MediumBlob" | "LongBlob" => W::wrap(StringColumnData::load(reader, size)?),
             "Date" => W::wrap(DateColumnData::<u16>::load(reader, size, tz)?),
+            "Date32" => W::wrap(DateColumnData::<i32>::load(reader, size, tz)?),
             "IPv4" => W::wrap(IpColumnData::<Ipv4>::load(reader, size)?),
             "IPv6" => W::wrap(IpColumnData::<Ipv6>::load(reader, size)?),
             "UUID" => W::wrap(IpColumnData::<Uuid>::load(reader, size)?),
