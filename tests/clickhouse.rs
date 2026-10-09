@@ -11,7 +11,7 @@ use chrono_tz::Tz;
 use clickhouse_rs::{
     errors::Error,
     row,
-    types::{Complex, Decimal, Enum16, Enum8, FromSql, SqlType, Value},
+    types::{Complex, Decimal, Enum16, Enum8, FromSql, SqlType, Value, ValueRef},
     Block, Options, Pool,
 };
 use futures_util::{
@@ -2572,5 +2572,151 @@ async fn test_insert_big_block() -> Result<(), Error> {
         .await?;
 
     assert_eq!(format!("{:?}", expected.as_ref()), format!("{:?}", &actual));
+    Ok(())
+}
+
+/// A cell as the driver decoded it.
+struct Cell<'a>(ValueRef<'a>);
+
+impl<'a> FromSql<'a> for Cell<'a> {
+    fn from_sql(value: ValueRef<'a>) -> clickhouse_rs::types::FromSqlResult<Self> {
+        Ok(Cell(value))
+    }
+}
+
+#[cfg(feature = "tokio_io")]
+#[tokio::test]
+async fn test_low_cardinality_nullable() -> Result<(), Error> {
+    let ddl = r"
+        CREATE TABLE clickhouse_test_low_cardinality_nullable (
+            id   UInt32,
+            text LowCardinality(Nullable(String))
+        ) Engine=Memory";
+
+    let pool = Pool::new(database_url());
+    let mut c = pool.get_handle().await?;
+    c.execute("DROP TABLE IF EXISTS clickhouse_test_low_cardinality_nullable")
+        .await?;
+    c.execute(ddl).await?;
+    c.execute(
+        "INSERT INTO clickhouse_test_low_cardinality_nullable VALUES (1, 'a'), (2, NULL), (3, 'b'), (4, 'a'), (5, '')",
+    )
+    .await?;
+    let block = c
+        .query("SELECT id, text FROM clickhouse_test_low_cardinality_nullable ORDER BY id")
+        .fetch_all()
+        .await?;
+
+    assert_eq!(
+        block.get_column("text")?.sql_type(),
+        SqlType::LowCardinality(SqlType::Nullable(&SqlType::String).into())
+    );
+    let text: Vec<Option<String>> = collect_values(&block, "text");
+    assert_eq!(
+        text,
+        vec![
+            Some("a".to_string()),
+            None,
+            Some("b".to_string()),
+            Some("a".to_string()),
+            Some(String::new()),
+        ]
+    );
+    Ok(())
+}
+
+#[cfg(feature = "tokio_io")]
+#[tokio::test]
+async fn test_tuple() -> Result<(), Error> {
+    let pool = Pool::new(database_url());
+    let mut c = pool.get_handle().await?;
+    let block = c
+        .query(
+            "SELECT
+                (toInt32(-2), 'two') AS unnamed,
+                CAST((7, NULL), 'Tuple(id Int32, `a label` Nullable(String))') AS named,
+                [(toUInt8(3), 'x'), (toUInt8(4), 'y')] AS nested,
+                toUInt8(9) AS after",
+        )
+        .fetch_all()
+        .await?;
+
+    assert_eq!(
+        block.get_column("unnamed")?.sql_type(),
+        SqlType::Tuple(vec![(None, &SqlType::Int32), (None, &SqlType::String)])
+    );
+    assert_eq!(
+        block.get_column("named")?.sql_type(),
+        SqlType::Tuple(vec![
+            (Some("id".to_string()), &SqlType::Int32),
+            (
+                Some("a label".to_string()),
+                SqlType::Nullable(&SqlType::String).into()
+            ),
+        ])
+    );
+
+    let unnamed: Cell = block.get(0, "unnamed")?;
+    assert_eq!(
+        unnamed.0,
+        ValueRef::Tuple(Arc::new(vec![
+            ValueRef::Int32(-2),
+            ValueRef::String(b"two")
+        ]))
+    );
+    let named: Cell = block.get(0, "named")?;
+    let ValueRef::Tuple(named) = named.0 else {
+        panic!("a Tuple column decodes to a tuple value");
+    };
+    assert_eq!(named[0], ValueRef::Int32(7));
+    assert_eq!(Option::<String>::from_sql(named[1].clone())?, None);
+    let nested: Cell = block.get(0, "nested")?;
+    let ValueRef::Array(_, nested) = nested.0 else {
+        panic!("an Array column decodes to an array value");
+    };
+    assert_eq!(
+        *nested,
+        vec![
+            ValueRef::Tuple(Arc::new(vec![ValueRef::UInt8(3), ValueRef::String(b"x")])),
+            ValueRef::Tuple(Arc::new(vec![ValueRef::UInt8(4), ValueRef::String(b"y")])),
+        ]
+    );
+    // Every element of the tuple is read, so the column after it decodes from the right offset.
+    let after: u8 = block.get(0, "after")?;
+    assert_eq!(after, 9);
+    Ok(())
+}
+
+#[cfg(feature = "tokio_io")]
+#[tokio::test]
+async fn test_map_entries_keep_server_order() -> Result<(), Error> {
+    let pool = Pool::new(database_url());
+    let mut c = pool.get_handle().await?;
+    let block = c
+        .query("SELECT map('b', 2, 'a', 1, 'b', 3) AS m, map(toDate('2024-01-02'), 1) AS d")
+        .fetch_all()
+        .await?;
+
+    let m: Cell = block.get(0, "m")?;
+    let ValueRef::Map(_, _, entries) = m.0 else {
+        panic!("a Map column decodes to a map value");
+    };
+    assert_eq!(
+        *entries,
+        vec![
+            (ValueRef::String(b"b"), ValueRef::UInt8(2)),
+            (ValueRef::String(b"a"), ValueRef::UInt8(1)),
+            (ValueRef::String(b"b"), ValueRef::UInt8(3)),
+        ]
+    );
+    let d: Cell = block.get(0, "d")?;
+    let ValueRef::Map(_, _, entries) = d.0 else {
+        panic!("a Map column decodes to a map value");
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        NaiveDate::from_sql(entries[0].0.clone())?,
+        NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()
+    );
     Ok(())
 }

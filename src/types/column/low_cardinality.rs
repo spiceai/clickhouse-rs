@@ -7,6 +7,7 @@ use crate::{
     types::{
         column::{
             column_data::{ArcColumnData, BoxColumnData, LowCardinalityAccessor},
+            nullable::NullableColumnData,
             ArcColumnWrapper, ColumnData, VectorColumnData,
         },
         SqlType, Value, ValueRef,
@@ -247,18 +248,36 @@ fn read_inner<R: ReadEx>(
     }
 
     let new_index_column: u64 = reader.read_scalar()?;
-    let inner = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
-        reader,
-        inner_type,
-        new_index_column as usize,
-        tz,
-    )?;
+    let inner = read_dictionary(reader, inner_type, new_index_column as usize, tz)?;
 
     let keys_rows: u64 = reader.read_scalar()?;
     let keys = LowCardinalityIndex::load(reader, keys_rows as usize, index_type)?;
     assert_eq!(flags, keys.get_flags());
 
     Ok((inner, keys))
+}
+
+/// The dictionary of a `LowCardinality(Nullable(T))` column is sent as plain `T`, and its
+/// first key stands for NULL.
+fn read_dictionary<R: ReadEx>(
+    reader: &mut R,
+    inner_type: &str,
+    size: usize,
+    tz: Tz,
+) -> Result<ArcColumnData> {
+    let Some(not_null_type) = inner_type
+        .strip_prefix("Nullable(")
+        .and_then(|inner| inner.strip_suffix(')'))
+    else {
+        return <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(reader, inner_type, size, tz);
+    };
+    let inner =
+        <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(reader, not_null_type, size, tz)?;
+    let mut nulls = vec![0; size];
+    if let Some(null_key) = nulls.first_mut() {
+        *null_key = 1;
+    }
+    Ok(Arc::new(NullableColumnData { inner, nulls }))
 }
 
 fn read_prefix<R: ReadEx>(reader: &mut R) -> Result<()> {

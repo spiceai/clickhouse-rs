@@ -101,11 +101,9 @@ impl ColumnData for MapColumnData {
             0_usize
         };
         let end = self.offsets.at(index) as usize;
-        let mut vs = HashMap::with_capacity(end - start);
+        let mut vs = Vec::with_capacity(end - start);
         for i in start..end {
-            let key = self.keys.at(i);
-            let value = self.values.at(i);
-            vs.insert(key, value);
+            vs.push((self.keys.at(i), self.values.at(i)));
         }
         ValueRef::Map(key_type.into(), value_type.into(), Arc::new(vs))
     }

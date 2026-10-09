@@ -49,11 +49,13 @@ pub enum ValueRef<'a> {
     Uuid([u8; 16]),
     Enum16(Vec<(String, i16)>, Enum16),
     Enum8(Vec<(String, i8)>, Enum8),
+    /// The entries of a map in the order the server sent them, duplicate keys included.
     Map(
         &'static SqlType,
         &'static SqlType,
-        Arc<HashMap<ValueRef<'a>, ValueRef<'a>>>,
+        Arc<Vec<(ValueRef<'a>, ValueRef<'a>)>>,
     ),
+    Tuple(Arc<Vec<ValueRef<'a>>>),
 }
 
 impl<'a> Hash for ValueRef<'a> {
@@ -102,6 +104,7 @@ impl<'a> PartialEq for ValueRef<'a> {
             }
             (ValueRef::Nullable(a), ValueRef::Nullable(b)) => *a == *b,
             (ValueRef::Array(ta, a), ValueRef::Array(tb, b)) => *ta == *tb && *a == *b,
+            (ValueRef::Tuple(a), ValueRef::Tuple(b)) => *a == *b,
             (ValueRef::Decimal(a), ValueRef::Decimal(b)) => *a == *b,
             (ValueRef::Enum8(a0, a1), ValueRef::Enum8(b0, b1)) => *a1 == *b1 && *a0 == *b0,
             (ValueRef::Enum16(a0, a1), ValueRef::Enum16(b0, b1)) => *a1 == *b1 && *a0 == *b0,
@@ -212,6 +215,10 @@ impl<'a> fmt::Display for ValueRef<'a> {
                 let cells: Vec<String> = vs.iter().map(|v| format!("{}-{}", v.0, v.1)).collect();
                 write!(f, "[{}]", cells.join(", "))
             }
+            ValueRef::Tuple(vs) => {
+                let cells: Vec<String> = vs.iter().map(|v| format!("{v}")).collect();
+                write!(f, "({})", cells.join(", "))
+            }
         }
     }
 }
@@ -252,6 +259,11 @@ impl<'a> From<ValueRef<'a>> for SqlType {
                 SqlType::DateTime(DateTimeType::DateTime64(*precision, *tz))
             }
             ValueRef::Map(k, v, _) => SqlType::Map(k, v),
+            ValueRef::Tuple(vs) => SqlType::Tuple(
+                vs.iter()
+                    .map(|v| (None, SqlType::from(v.clone()).into()))
+                    .collect(),
+            ),
         }
     }
 }
@@ -335,6 +347,9 @@ impl<'a> From<ValueRef<'a>> for Value {
                     value_list.insert(key, value);
                 }
                 Value::Map(k, v, Arc::new(value_list))
+            }
+            ValueRef::Tuple(vs) => {
+                Value::Tuple(Arc::new(vs.iter().cloned().map(Value::from).collect()))
             }
         }
     }
@@ -427,14 +442,15 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
             Value::Uuid(v) => ValueRef::Uuid(*v),
             Value::ChronoDateTime(_) => unimplemented!(),
             Value::Map(k, v, vs) => {
-                let mut ref_map = HashMap::with_capacity(vs.len());
+                let mut ref_map = Vec::with_capacity(vs.len());
                 for (k, v) in vs.iter() {
                     let key_ref: ValueRef<'a> = From::from(k);
                     let value_ref: ValueRef<'a> = From::from(v);
-                    ref_map.insert(key_ref, value_ref);
+                    ref_map.push((key_ref, value_ref));
                 }
                 ValueRef::Map(k, v, Arc::new(ref_map))
             }
+            Value::Tuple(vs) => ValueRef::Tuple(Arc::new(vs.iter().map(ValueRef::from).collect())),
         }
     }
 }

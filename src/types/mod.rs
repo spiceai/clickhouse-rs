@@ -337,6 +337,8 @@ pub enum SqlType {
     Enum16(Vec<(String, i16)>),
     SimpleAggregateFunction(SimpleAggFunc, &'static SqlType),
     Map(&'static SqlType, &'static SqlType),
+    /// The elements of a tuple in order, each with its name when the tuple is named.
+    Tuple(Vec<(Option<String>, &'static SqlType)>),
 }
 
 lazy_static! {
@@ -442,6 +444,16 @@ impl SqlType {
                 format!("Enum16({})", a.join(",")).into()
             }
             SqlType::Map(k, v) => format!("Map({}, {})", &k, &v).into(),
+            SqlType::Tuple(elements) => {
+                let elements: Vec<String> = elements
+                    .iter()
+                    .map(|(name, sql_type)| match name {
+                        Some(name) => format!("{name} {sql_type}"),
+                        None => sql_type.to_string().into(),
+                    })
+                    .collect();
+                format!("Tuple({})", elements.join(", ")).into()
+            }
         }
     }
 

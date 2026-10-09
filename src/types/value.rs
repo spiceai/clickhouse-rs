@@ -57,6 +57,7 @@ pub enum Value {
         &'static SqlType,
         Arc<HashMap<Value, Value>>,
     ),
+    Tuple(Arc<Vec<Value>>),
 }
 
 impl Hash for Value {
@@ -118,6 +119,7 @@ impl PartialEq for Value {
             (Value::Enum16(values_a, val_a), Value::Enum16(values_b, val_b)) => {
                 *values_a == *values_b && *val_a == *val_b
             }
+            (Value::Tuple(a), Value::Tuple(b)) => *a == *b,
             (Value::Ipv4(a), Value::Ipv4(b)) => *a == *b,
             (Value::Ipv6(a), Value::Ipv6(b)) => *a == *b,
             (Value::Uuid(a), Value::Uuid(b)) => *a == *b,
@@ -190,6 +192,12 @@ impl Value {
             SqlType::Enum8(values) => Value::Enum8(values, Enum8(0)),
             SqlType::Enum16(values) => Value::Enum16(values, Enum16(0)),
             SqlType::Map(k, v) => Value::Map(k, v, Arc::new(HashMap::default())),
+            SqlType::Tuple(elements) => Value::Tuple(Arc::new(
+                elements
+                    .into_iter()
+                    .map(|(_, sql_type)| Value::default(sql_type.clone()))
+                    .collect(),
+            )),
         }
     }
 }
@@ -287,6 +295,10 @@ impl fmt::Display for Value {
                     .collect();
                 write!(f, "[{}]", cells.join(", "))
             }
+            Value::Tuple(vs) => {
+                let cells: Vec<String> = vs.iter().map(|v| format!("{v}")).collect();
+                write!(f, "({})", cells.join(", "))
+            }
         }
     }
 }
@@ -331,6 +343,11 @@ impl From<Value> for SqlType {
                 SqlType::DateTime(DateTimeType::DateTime64(precision, tz))
             }
             Value::Map(k, v, _) => SqlType::Map(k, v),
+            Value::Tuple(vs) => SqlType::Tuple(
+                vs.iter()
+                    .map(|v| (None, SqlType::from(v.clone()).into()))
+                    .collect(),
+            ),
         }
     }
 }
