@@ -29,6 +29,7 @@ use crate::{
             numeric::VectorColumnData,
             simple_agg_func::SimpleAggregateFunctionColumnData,
             string::StringColumnData,
+            tuple::TupleColumnData,
             ArcColumnWrapper, BoxColumnWrapper, ColumnWrapper,
         },
         decimal::NoBits,
@@ -90,6 +91,8 @@ impl dyn ColumnData {
                     W::wrap(ArrayColumnData::load(reader, inner_type, size, tz)?)
                 } else if let Some(inner_type) = parse_map_type(type_name) {
                     W::wrap(MapColumnData::load(reader, inner_type, size, tz)?)
+                } else if let Some(elements) = parse_tuple_type(type_name) {
+                    W::wrap(TupleColumnData::load(reader, elements, size, tz)?)
                 } else if let Some((precision, scale, nobits)) = parse_decimal(type_name) {
                     W::wrap(DecimalColumnData::load(
                         reader, precision, scale, nobits, size, tz,
@@ -224,6 +227,19 @@ impl dyn ColumnData {
                 )?,
                 size: 0,
             }),
+            SqlType::Tuple(elements) => {
+                let mut names = Vec::with_capacity(elements.len());
+                let mut inner = Vec::with_capacity(elements.len());
+                for (name, sql_type) in elements {
+                    names.push(name);
+                    inner.push(<dyn ColumnData>::from_type::<ArcColumnWrapper>(
+                        sql_type.clone(),
+                        timezone,
+                        capacity,
+                    )?);
+                }
+                W::wrap(TupleColumnData { names, inner })
+            }
             SqlType::LowCardinality(inner) => {
                 W::wrap(
                     LowCardinalityColumnData::empty(inner, timezone, capacity)?, // LowCardinalityColumnData {
@@ -290,6 +306,60 @@ fn parse_map_type(source: &str) -> Option<(&str, &str)> {
     let value = body[comma_pos + 1..].trim();
 
     Some((key, value))
+}
+
+/// Splits `Tuple(...)` into its elements, each with its name when the tuple is named.
+fn parse_tuple_type(source: &str) -> Option<Vec<(Option<&str>, &str)>> {
+    let body = source.strip_prefix("Tuple(")?.strip_suffix(')')?;
+    let mut elements = Vec::new();
+    let mut start = 0;
+    for end in top_level_offsets(body, ',')
+        .into_iter()
+        .chain(std::iter::once(body.len()))
+    {
+        let element = body[start..end].trim();
+        start = end + 1;
+        if element.is_empty() {
+            return None;
+        }
+        // A type has no whitespace outside its brackets, so a space there ends the element's name.
+        elements.push(match top_level_offsets(element, ' ').first() {
+            Some(&space) => (
+                Some(element[..space].trim_matches('`')),
+                element[space + 1..].trim(),
+            ),
+            None => (None, element),
+        });
+    }
+    Some(elements)
+}
+
+/// Byte offsets of `separator` in `source` outside brackets, quoted strings and quoted names.
+fn top_level_offsets(source: &str, separator: char) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut depth = 0_usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (offset, c) in source.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            c if c == separator && depth == 0 => offsets.push(offset),
+            _ => {}
+        }
+    }
+    offsets
 }
 
 fn parse_simple_agg_fun(source: &str) -> Option<(SimpleAggFunc, &str)> {

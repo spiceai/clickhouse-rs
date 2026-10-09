@@ -52,6 +52,7 @@ mod numeric;
 mod simple_agg_func;
 mod string;
 mod string_pool;
+mod tuple;
 mod util;
 
 /// Represents Clickhouse Column
